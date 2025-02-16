@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import digitalocean
 from tabulate import tabulate
+import requests
 import requests.exceptions
 
 class DigitalOceanError(Exception):
@@ -29,7 +30,7 @@ def get_do_manager():
         manager = digitalocean.Manager(token=token)
         # Verify token by making a simple API call
         manager.get_account()
-        return manager
+        return token, manager
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             raise TokenError("Invalid DigitalOcean API token. Please check your token and try again.")
@@ -43,10 +44,31 @@ def get_do_manager():
     except Exception as e:
         raise APIError(f"Unexpected error: {str(e)}")
 
-def get_billing_history(manager):
-    """Fetch billing history from DigitalOcean."""
+def get_billing_history(token):
+    """Fetch billing history from DigitalOcean API."""
     try:
-        return manager.get_billing_history()
+        # Get today's date and first day of current month
+        today = datetime.now()
+        start_of_month = today.replace(day=1).strftime('%Y-%m-%d')
+        today_str = today.strftime('%Y-%m-%d')
+
+        url = "https://api.digitalocean.com/v2/customers/my/billing_history"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        
+        params = {
+            'start_time': start_of_month,
+            'end_time': today_str
+        }
+        
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        billing_data = response.json()
+        return billing_data.get('billing_history', [])
+    
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             raise TokenError("Token authorization failed while fetching billing history.")
@@ -63,11 +85,11 @@ def calculate_daily_cost(billing_history):
     
     for item in billing_history:
         date = datetime.strptime(item['date'], '%Y-%m-%d').date()
-        if date == today:
+        if date == today and item.get('amount', '0') != '0':
             daily_costs.append({
                 'description': item['description'],
-                'amount': item['amount'],
-                'duration': item.get('duration', 'N/A')
+                'amount': float(item['amount']),
+                'duration': 'N/A'
             })
     
     return daily_costs
@@ -189,8 +211,8 @@ def save_error_report(error):
 def main():
     """Main function to run the cost alert script."""
     try:
-        manager = get_do_manager()
-        billing_history = get_billing_history(manager)
+        token, manager = get_do_manager()
+        billing_history = get_billing_history(token)
         daily_costs = calculate_daily_cost(billing_history)
         markdown_table, total_cost = create_markdown_table(daily_costs)
         save_cost_report(markdown_table, total_cost)
