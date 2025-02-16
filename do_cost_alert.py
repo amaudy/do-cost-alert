@@ -84,7 +84,10 @@ def calculate_daily_cost(billing_history):
     daily_costs = []
     
     for item in billing_history:
-        date = datetime.strptime(item['date'], '%Y-%m-%d').date()
+        # Handle both date formats: '2025-02-16' and '2025-02-16T13:15:26Z'
+        date_str = item['date'].split('T')[0] if 'T' in item['date'] else item['date']
+        date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
         if date == today and item.get('amount', '0') != '0':
             daily_costs.append({
                 'description': item['description'],
